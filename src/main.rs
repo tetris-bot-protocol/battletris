@@ -25,7 +25,7 @@ struct Options {
     #[structopt(short, long)]
     format: MatchFormat,
 
-    #[structopt(long)]
+    #[structopt(short, long)]
     config: BattleConfig,
 }
 
@@ -57,6 +57,10 @@ impl MatchFormat {
     }
 
     fn extra_info(self, w: u32, l: u32, buf: &mut String) {
+        if w == 0 || l == 0 {
+            return;
+        }
+
         match self {
             MatchFormat::Count(_) => {}
             MatchFormat::FirstTo(_) => {}
@@ -64,7 +68,7 @@ impl MatchFormat {
                 let bounds = sprt_bounds(0.05, 0.05);
                 write!(
                     buf,
-                    "LLR: {:.2} ({:.2}, {:.2})",
+                    "LLR: {:.2} ({:.2}, {:.2})  \t",
                     llr(w, l, elo0, elo1),
                     bounds.start(),
                     bounds.end()
@@ -72,6 +76,22 @@ impl MatchFormat {
                 .unwrap();
             }
         }
+
+        let n = (w + l) as f64;
+        let p = w as f64 / n;
+        // Wilson's score.
+        let zsq_n = 1.96 * 1.96 / n;
+        let rt = (p * (1.0 - p) / n + zsq_n / 4.0 / n).sqrt();
+        let upper = (p + zsq_n / 2.0 + 1.96 * rt) / (1.0 + zsq_n);
+        // let lower = (p + zsq_n / 2.0 - 1.96 * rt) / (1.0 + zsq_n);
+
+        // Convert to elo. The confidence interval is symmetric in elo, but I couldn't
+        // figure out how to exploit that property to simplify the math here.
+        let high_elo = -400.0 * ((1.0 - upper) / upper).log10();
+        let mid_elo = -400.0 * ((1.0 - p) / p).log10();
+        // let low_elo = -400.0 * ((1.0 - lower) / lower).log10();
+
+        write!(buf, "Elo: {:.2} ± {:.2}", mid_elo, high_elo - mid_elo).unwrap();
     }
 }
 
@@ -84,8 +104,8 @@ fn llr(w: u32, l: u32, elo0: f64, elo1: f64) -> f64 {
     let mean = w as f64 / n;
     let var_s = (mean - mean * mean) / n;
 
-    let p0 = 1.0 / (1.0 + 10.0f64.powf(elo0 / 400.0));
-    let p1 = 1.0 / (1.0 + 10.0f64.powf(elo1 / 400.0));
+    let p0 = 1.0 / (1.0 + 10.0f64.powf(-elo0 / 400.0));
+    let p1 = 1.0 / (1.0 + 10.0f64.powf(-elo1 / 400.0));
 
     (p1 - p0) * (2.0 * mean - p0 - p1) / var_s / 2.0
 }
@@ -153,26 +173,6 @@ fn run(options: Options) -> anyhow::Result<()> {
     let mut right_crashes = 0;
 
     while options.format.should_continue(left_wins, right_wins) {
-        if !options.quiet {
-            let mut result = String::new();
-            write!(&mut result, "{} ", left_wins).unwrap();
-            if left_crashes != 0 {
-                write!(&mut result, "({} crashes) ", left_crashes).unwrap();
-            }
-            write!(&mut result, "- {}", right_wins).unwrap();
-            if right_crashes != 0 {
-                write!(&mut result, " ({} crashes)", right_crashes).unwrap();
-            }
-            while result.len() < 30 {
-                result.push(' ');
-            }
-            options
-                .format
-                .extra_info(left_wins, right_wins, &mut result);
-            print!("\r\x1B[K{}", result);
-            let _ = stdout().flush();
-        }
-
         match battle::battle(&mut left, &mut right, &options.config) {
             Side::Left => left_wins += 1,
             Side::Right => right_wins += 1,
@@ -182,29 +182,37 @@ fn run(options: Options) -> anyhow::Result<()> {
         let _ = right.send_message(tbp::frontend_msg::Stop::new());
 
         if left.check().is_err() {
+            if !options.quiet {
+                println!("\r\x1B[KLeft crashed");
+            }
             left_crashes += 1;
             load_bot(&mut left)?;
         }
         if right.check().is_err() {
+            if !options.quiet {
+                println!("\r\x1B[KRight crashed");
+            }
             right_crashes += 1;
             load_bot(&mut right)?;
         }
-    }
 
-    if !options.quiet {
-        print!("\r\x1B[K");
-    }
-    println!("{} - {}", left_wins, right_wins);
-    println!("Crashes: {} - {}", left_crashes, right_crashes);
-    if !options.quiet {
-        let mut result = String::new();
-        options
-            .format
-            .extra_info(left_wins, right_wins, &mut result);
-        if !result.is_empty() {
-            println!("{}", result);
+        if !options.quiet {
+            let mut result = String::new();
+            write!(&mut result, "{} - {}   \t", left_wins, right_wins).unwrap();
+            options
+                .format
+                .extra_info(left_wins, right_wins, &mut result);
+            print!("\r\x1B[K{}", result);
+            let _ = stdout().flush();
         }
     }
+
+    if options.quiet {
+        println!("{} - {}", left_wins, right_wins);
+    } else {
+        println!();
+    }
+    println!("Crashes: {} - {}", left_crashes, right_crashes);
 
     Ok(())
 }
