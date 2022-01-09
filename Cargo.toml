@@ -1,0 +1,15 @@
+[package]
+name = "battletris"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.52"
+serde_json = "1.0.74"
+structopt = "0.3.25"
+wait-timeout = "0.2.0"
+rand = "0.8.4"
+serde = { version = "1.0.133", features = ["derive"] }
+tbp = "3.0.0"
