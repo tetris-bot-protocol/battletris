@@ -116,13 +116,13 @@ pub fn battle(
                 match bot.poll_message() {
                     Err(_) => break opponent,
                     Ok(None) => {
-                        if (current - requested) * config.time_quanta_ms > 500 {
-                            break opponent;
-                        }
                         event_queue.push(Event {
                             time: current + 1,
                             ..event
                         });
+                        if (current - requested) * config.time_quanta_ms > 500 {
+                            break opponent;
+                        }
                     }
                     Ok(Some(tbp::BotMessage::Suggestion(suggestion))) => {
                         let result = game.play_suggestion(suggestion.moves, config);
