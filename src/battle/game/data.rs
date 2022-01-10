@@ -36,7 +36,7 @@ pub struct PieceLocation {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Board {
-    pub(super) field: [[CellColor; 10]; 40],
+    field: [[CellColor; 10]; 40],
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

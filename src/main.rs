@@ -57,10 +57,6 @@ impl MatchFormat {
     }
 
     fn extra_info(self, w: u32, l: u32, buf: &mut String) {
-        if w == 0 || l == 0 {
-            return;
-        }
-
         match self {
             MatchFormat::Count(_) => {}
             MatchFormat::FirstTo(_) => {}
@@ -83,15 +79,22 @@ impl MatchFormat {
         let zsq_n = 1.96 * 1.96 / n;
         let rt = (p * (1.0 - p) / n + zsq_n / 4.0 / n).sqrt();
         let upper = (p + zsq_n / 2.0 + 1.96 * rt) / (1.0 + zsq_n);
-        // let lower = (p + zsq_n / 2.0 - 1.96 * rt) / (1.0 + zsq_n);
+        let lower = (p + zsq_n / 2.0 - 1.96 * rt) / (1.0 + zsq_n);
 
-        // Convert to elo. The confidence interval is symmetric in elo, but I couldn't
-        // figure out how to exploit that property to simplify the math here.
+        // Convert to elo
         let high_elo = -400.0 * ((1.0 - upper) / upper).log10();
         let mid_elo = -400.0 * ((1.0 - p) / p).log10();
-        // let low_elo = -400.0 * ((1.0 - lower) / lower).log10();
+        let low_elo = -400.0 * ((1.0 - lower) / lower).log10();
 
-        write!(buf, "Elo: {:.2} ± {:.2}", mid_elo, high_elo - mid_elo).unwrap();
+        if w == 0 {
+            write!(buf, "Elo: < {:.2}", high_elo).unwrap();
+        } else if l == 0 {
+            write!(buf, "Elo: > {:.2}", low_elo).unwrap();
+        } else {
+            // The Wilson score interval is symmetric when converted to elo. I think this means
+            // there's a better way of calculating it, but I don't know what that would be.
+            write!(buf, "Elo: {:.2} ± {:.2}", mid_elo, high_elo - mid_elo).unwrap();
+        }
     }
 }
 
