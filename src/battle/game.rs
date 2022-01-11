@@ -227,18 +227,52 @@ impl Game {
                 return HashMap::new();
             }
         }
-        reached[index(start, Spin::None)] = Cost {
-            base: 0,
-            softdrop: 0,
-        };
-        queue.push(QueueMove {
-            loc: start,
-            spin: Spin::None,
-            cost: Cost {
+        let dy = start.y - self.board.height() - 2;
+        if dy < 0 {
+            let cost = Cost {
                 base: 0,
                 softdrop: 0,
-            },
-        });
+            };
+            reached[index(start, Spin::None)] = cost;
+            queue.push(QueueMove {
+                loc: start,
+                spin: Spin::None,
+                cost,
+            });
+        } else {
+            let start_east = start.rotate(Rotation::East).next().unwrap();
+            let start_south = start_east.rotate(Rotation::South).next().unwrap();
+            let start_west = start.rotate(Rotation::West).next().unwrap();
+            let starts = [
+                (start, 0),
+                (start_east, movement_delay),
+                (start_south, 2 * movement_delay),
+                (start_west, movement_delay),
+            ];
+            for (start, rcost) in starts {
+                let lx = -start.x;
+                let ux = 10 - start.x;
+                for dx in lx..ux {
+                    let loc = PieceLocation {
+                        x: start.x + dx,
+                        y: start.y - dy,
+                        ..start
+                    };
+                    if !loc.obstructed(&self.board) {
+                        let cost = Cost {
+                            base: dx.abs() as u32 * movement_delay + rcost,
+                            softdrop: dy as u32 * softdrop_delay,
+                        };
+                        reached[index(loc, Spin::None)] = cost;
+                        queue.push(QueueMove {
+                            loc,
+                            spin: Spin::None,
+                            cost,
+                        });
+                    }
+                }
+            }
+        }
 
         let mut moves = HashMap::new();
         while let Some(mv) = queue.pop() {

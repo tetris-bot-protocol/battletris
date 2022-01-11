@@ -212,6 +212,10 @@ impl Board {
         }
     }
 
+    pub fn height(&self) -> i32 {
+        self.field.partition_point(|r| r != &[CellColor::Empty; 10]) as i32
+    }
+
     pub fn to_tbp(&self) -> Vec<Vec<Option<char>>> {
         let mut result = Vec::with_capacity(40);
         for r in self.field {
