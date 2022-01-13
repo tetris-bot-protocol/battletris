@@ -1,7 +1,9 @@
 use std::fmt::Write as FmtWrite;
 use std::io::{stdout, Write};
 use std::ops::RangeInclusive;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Sender};
 
 use battle::BattleConfig;
 use structopt::StructOpt;
@@ -24,6 +26,9 @@ struct Options {
 
     #[structopt(short, long)]
     format: MatchFormat,
+
+    #[structopt(short, long)]
+    parallelism: u32,
 
     #[structopt(short, long)]
     config: BattleConfig,
@@ -157,11 +162,11 @@ impl std::fmt::Display for MatchFormat {
 }
 
 fn run(options: Options) -> anyhow::Result<()> {
-    let mut left = BotInstance::new(&options.bot_a.canonicalize()?);
-    let mut right = BotInstance::new(&options.bot_b.canonicalize()?);
+    let left = options.bot_a.canonicalize()?;
+    let right = options.bot_b.canonicalize()?;
 
-    let left_info = left.launch()?;
-    let right_info = right.launch()?;
+    let left_info = BotInstance::new(&left).launch()?;
+    let right_info = BotInstance::new(&right).launch()?;
 
     if !options.quiet {
         println!(
@@ -170,45 +175,49 @@ fn run(options: Options) -> anyhow::Result<()> {
         );
     }
 
+    let running = AtomicBool::new(true);
+    let (send, recv) = channel();
+
     let mut left_wins = 0;
     let mut right_wins = 0;
     let mut left_crashes = 0;
     let mut right_crashes = 0;
 
-    while options.format.should_continue(left_wins, right_wins) {
-        match battle::battle(&mut left, &mut right, &options.config) {
-            Side::Left => left_wins += 1,
-            Side::Right => right_wins += 1,
+    crossbeam_utils::thread::scope(|s| {
+        for _ in 0..options.parallelism {
+            let send = send.clone();
+            s.spawn(|_| battle_thread(&left, &right, &options.config, &running, send));
         }
+        drop(send);
 
-        let _ = left.send_message(tbp::frontend_msg::Stop::new());
-        let _ = right.send_message(tbp::frontend_msg::Stop::new());
+        while options.format.should_continue(left_wins, right_wins) {
+            let (winner, left_crashed, right_crashed) = recv.recv().unwrap();
 
-        if left.check().is_err() {
-            if !options.quiet {
-                println!("\r\x1B[KLeft crashed");
+            if left_crashed {
+                left_crashes += 1;
             }
-            left_crashes += 1;
-            load_bot(&mut left)?;
-        }
-        if right.check().is_err() {
-            if !options.quiet {
-                println!("\r\x1B[KRight crashed");
+            if right_crashed {
+                right_crashes += 1;
             }
-            right_crashes += 1;
-            load_bot(&mut right)?;
+            match winner {
+                Side::Left => left_wins += 1,
+                Side::Right => right_wins += 1,
+            }
+
+            if !options.quiet {
+                let mut result = String::new();
+                write!(&mut result, "{} - {}   \t", left_wins, right_wins).unwrap();
+                options
+                    .format
+                    .extra_info(left_wins, right_wins, &mut result);
+                print!("\r\x1B[K{}", result);
+                let _ = stdout().flush();
+            }
         }
 
-        if !options.quiet {
-            let mut result = String::new();
-            write!(&mut result, "{} - {}   \t", left_wins, right_wins).unwrap();
-            options
-                .format
-                .extra_info(left_wins, right_wins, &mut result);
-            print!("\r\x1B[K{}", result);
-            let _ = stdout().flush();
-        }
-    }
+        running.store(false, Ordering::SeqCst);
+    })
+    .unwrap();
 
     if options.quiet {
         println!("{} - {}", left_wins, right_wins);
@@ -220,12 +229,41 @@ fn run(options: Options) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn battle_thread(
+    left: &Path,
+    right: &Path,
+    config: &BattleConfig,
+    running: &AtomicBool,
+    results: Sender<(Side, bool, bool)>,
+) -> anyhow::Result<()> {
+    let mut left = BotInstance::new(left);
+    let mut right = BotInstance::new(right);
+
+    load_bot(&mut left)?;
+    load_bot(&mut right)?;
+
+    while let Some(winner) = battle::battle(&mut left, &mut right, config, running) {
+        let _ = left.send_message(tbp::frontend_msg::Stop::new());
+        let _ = right.send_message(tbp::frontend_msg::Stop::new());
+
+        let left_crashed = left.check().is_err();
+        let right_crashed = right.check().is_err();
+
+        results.send((winner, left_crashed, right_crashed))?;
+
+        if left_crashed {
+            load_bot(&mut left)?;
+        }
+        if right_crashed {
+            load_bot(&mut right)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn load_bot(bot: &mut BotInstance) -> anyhow::Result<bot_msg::Info> {
-    bot.launch()?;
-    let info = match bot.block_message()? {
-        tbp::BotMessage::Info(info) => info,
-        _ => anyhow::bail!("Expected info message upon startup"),
-    };
+    let info = bot.launch()?;
     let mut rules = frontend_msg::Rules::new();
     rules.randomizer = RandomizerRule::SevenBag;
     bot.send_message(rules)?;

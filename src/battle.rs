@@ -1,5 +1,6 @@
 use std::collections::BinaryHeap;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -58,7 +59,8 @@ pub fn battle(
     left: &mut BotInstance,
     right: &mut BotInstance,
     BattleConfig(config): &BattleConfig,
-) -> Side {
+    running: &AtomicBool,
+) -> Option<Side> {
     let mut event_queue = BinaryHeap::new();
     event_queue.push(Event {
         side: Side::Left,
@@ -86,6 +88,10 @@ pub fn battle(
         let now = Instant::now();
         if next_time > now {
             std::thread::sleep(next_time - now);
+        }
+
+        if !running.load(Ordering::SeqCst) {
+            return None;
         }
 
         let current = start_time.elapsed().as_millis() as u64 / config.time_quanta_ms;
@@ -195,7 +201,7 @@ pub fn battle(
         }
     }
 
-    winner
+    Some(winner)
 }
 
 #[derive(Copy, Clone, Debug)]

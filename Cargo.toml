@@ -13,3 +13,4 @@ wait-timeout = "0.2.0"
 rand = "0.8.4"
 serde = { version = "1.0.133", features = ["derive"] }
 tbp = "3.0.0"
+crossbeam-utils = "0.8.6"
